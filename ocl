@@ -1,4 +1,4 @@
-#!/Users/wgordon/conda/envs/ocl/bin/python
+#!/usr/bin/env python
 
 import argparse
 import os
