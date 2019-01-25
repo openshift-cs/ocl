@@ -28,8 +28,9 @@ SHORTHANDS = {
 
 
 class OpenShiftClient:
-    def __init__(self, cluster):
+    def __init__(self, cluster, password=None):
         self.cluster = cluster
+        self.password = password
         if not self.cluster_exists():
             print('Cluster {cluster} does not exist. Exiting...'.format(cluster=cluster))
             exit(-1)
@@ -42,8 +43,9 @@ class OpenShiftClient:
     def login(self, user=None, config_path=None):
         oc_login_cmd = 'oc login https://api.{cluster}.openshift.com:443'.format(cluster=self.cluster)
         if user:
-            password = getpass()
-            oc_login_cmd += ' -u {username} -p {password}'.format(username=user, password=password)
+            if not self.password:
+                self.password = getpass()
+            oc_login_cmd += ' -u {username} -p {password}'.format(username=user, password=self.password)
         if config_path:
             oc_login_cmd += ' --config={config_path}'.format(config_path=config_path)
         _, err = self._cmd(oc_login_cmd)
@@ -87,8 +89,8 @@ class OpenShiftClient:
 
 
 class KubeContext:
-    def __init__(self, cluster, path='~/.kube/config', reset=False):
-        self.oc = OpenShiftClient(cluster)
+    def __init__(self, cluster, path='~/.kube/config', reset=False, password=None):
+        self.oc = OpenShiftClient(cluster, password)
         self.yaml = YAML()
         self.cluster = cluster
         self.path = Path.home() / path[2:] if path.startswith('~/') else Path(path)
@@ -199,6 +201,7 @@ def parse_args():
         '''.format(cluster_shorthand='\n\t\t    '.join(
         ['{shorthand}:\t{cluster}'.format(shorthand=key, cluster=value) for key, value in SHORTHANDS.items()])))
     parser.add_argument('--reset', action='store_true', help='Resets the .kube/config contexts')
+    parser.add_argument('--password', type=str, help='Optionally provide password')
 
     return parser.parse_args()
 
@@ -207,7 +210,7 @@ if __name__ == '__main__':
     args = parse_args()
     cluster_id = SHORTHANDS.get(args.cluster, args.cluster)
 
-    kube_context = KubeContext(cluster_id, reset=args.reset)
+    kube_context = KubeContext(cluster_id, reset=args.reset, password=args.password)
     if kube_context.set_context():
         print('Successfully logged into {}'.format(cluster_id))
     else:
