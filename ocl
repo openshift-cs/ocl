@@ -118,7 +118,7 @@ class KubeContext:
 
     def _find_resource(self, resource, username=None, get_index=False):
         if username:
-            search_for = '{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster)
+            search_for = username
         else:
             search_for = self.cluster
         if get_index:
@@ -127,7 +127,7 @@ class KubeContext:
             return next((value for value in self.context[resource] if value['name'] == search_for), None)
 
     def _get_token(self, username):
-        user = self._find_resource('users', username)
+        user = self._find_resource('users', username=username)
         return user['user']['token'] if user else None
 
     def _create_user(self):
@@ -146,14 +146,14 @@ class KubeContext:
             except KeyError:
                 print('Be sure to set the `OCL_USERNAME` environment variable before continuing.')
                 exit(1)
-            token = temp_context._get_token(username)
+            token = temp_context._get_token('{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster))
             temp_context.path.unlink()
         else:
             webbrowser.open('https://api.{cluster}.openshift.com/oauth/token/request'.format(cluster=self.cluster))
             username = 'wgordon'
             token = getpass('API token: ')
         return {
-            'name': '{username}/{cluster}'.format(username=username, cluster=self.cluster),
+            'name': '{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster),
             'user': {'token': token}
         }
 
@@ -177,7 +177,10 @@ class KubeContext:
 
         # replace of append blocks
         for block_name, block in blocks.items():
-            index = self._find_resource(block_name, get_index=True)
+            if block_name == 'users':
+                index = self._find_resource(block_name, username=block['name'], get_index=True)
+            else:
+                index = self._find_resource(block_name, get_index=True)
             if index:
                 self.context[block_name][index] = block
             else:
