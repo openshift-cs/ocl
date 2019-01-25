@@ -1,10 +1,11 @@
-#!/usr/bin/env python
+#!/Users/wgordon/conda/envs/ocl/bin/python
 
 import argparse
 import os
 import webbrowser
 import urllib.request
 import urllib.error
+import certifi
 from getpass import getpass
 from pathlib import Path
 from subprocess import run, PIPE
@@ -72,7 +73,7 @@ class OpenShiftClient:
 
     def cluster_exists(self):
         try:
-            conn = urllib.request.urlopen('https://api.{cluster}.openshift.com'.format(cluster=self.cluster))
+            conn = urllib.request.urlopen('https://api.{cluster}.openshift.com'.format(cluster=self.cluster), cafile=certifi.where())
         except urllib.error.URLError as e:
             if e.reason.errno == 8:  # hostname doesn't exist
                 return False
