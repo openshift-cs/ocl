@@ -5,6 +5,7 @@ import os
 import webbrowser
 import urllib.request
 import urllib.error
+import ssl
 import certifi
 from getpass import getpass
 from pathlib import Path
@@ -13,26 +14,27 @@ from ruamel.yaml import YAML
 
 
 SHORTHANDS = {
-    'scc1': 'starter-ca-central-1',
-    'sue1': 'starter-us-east-1',
-    'sue1a': 'starter-us-east-1a',
-    'sue1b': 'starter-us-east-1b',
-    'sue2': 'starter-us-east-2',
-    'sue2a': 'starter-us-east-2a',
-    'suw1': 'starter-us-west-1',
-    'suw2': 'starter-us-west-2',
-    'pas2': 'pro-ap-southeast-2',
-    'pew1': 'pro-eu-west-1',
-    'pue1': 'pro-us-east-1'
+    'sue2': 'https://api.us-east-2.online-starter.openshift.com:6443',
+    'suw2': 'https://api.us-west-2.online-starter.openshift.com:6443',
+    'osd-demo': 'https://api.osd4-demo.u6k6.p1.openshiftapps.com:6443',
+    'os-web': 'https://api.openshift-web.p0s5.p1.openshiftapps.com:6443',
+    'pas2': 'https://api.pro-ap-southeast-2.openshift.com:443',
+    'pew1': 'https://api.pro-eu-west-1.openshift.com:443',
+    'pue1': 'https://api.pro-us-east-1.openshift.com:443',
+    'rue1': 'https://api.rh-us-east-1.openshift.com:443',
+    'evg': 'https://api.evg.openshift.com:443',
+    'bu-demo': 'https://api.bu-demo.openshift.com:443',
+    'engint': 'https://api.engint.openshift.com:443',
+    'ded-stage': 'https://api.ded-stage-aws.openshift.com:443',
 }
 
 
 class OpenShiftClient:
-    def __init__(self, cluster, password=None):
-        self.cluster = cluster
+    def __init__(self, cluster_api, password=None):
+        self.cluster_api = cluster_api
         self.password = password
         if not self.cluster_exists():
-            print('Cluster {cluster} does not exist. Exiting...'.format(cluster=cluster))
+            print(f'Cluster {self.cluster_api} does not exist. Exiting...')
             exit(-1)
 
     @staticmethod
@@ -41,33 +43,33 @@ class OpenShiftClient:
         return p.stdout.strip(), p.stderr.strip()
 
     def login(self, user=None, config_path=None):
-        oc_login_cmd = 'oc login https://api.{cluster}.openshift.com:443'.format(cluster=self.cluster)
+        oc_login_cmd = f'oc login --server={self.cluster_api}'
         if user:
             if not self.password:
                 self.password = getpass()
-            oc_login_cmd += ' -u {username} -p {password}'.format(username=user, password=self.password)
+            oc_login_cmd += f' -u {user} -p {self.password}'
         if config_path:
-            oc_login_cmd += ' --config={config_path}'.format(config_path=config_path)
+            oc_login_cmd += f' --config={config_path}'
         _, err = self._cmd(oc_login_cmd)
         if err:
-            print('Login to {cluster} failed. Exiting...'.format(cluster=self.cluster))
+            print(f'Login to {self.cluster_api} failed. Exiting...')
             print(err)
             exit(-1)
 
     def set_namespace(self, namespace):
-        _, err = self._cmd('oc project {namespace}'.format(namespace=namespace))
+        _, err = self._cmd(f'oc project {namespace}')
 
     def set_context(self):
-        _, err = self._cmd('oc adm config use-context {cluster}'.format(cluster=self.cluster))
+        _, err = self._cmd(f'oc adm config use-context {self.cluster_api}')
         if err:
-            print('Context {cluster} invalid. Exiting...'.format(cluster=self.cluster))
+            print(f'Context {self.cluster_api} invalid. Exiting...')
             print(err)
             exit(-1)
 
     def is_logged_in(self):
         _, err1 = self._cmd('oc whoami')
-        cluster_url, err2 = self._cmd('oc whoami --show-server')
-        if err1 or err2 or cluster_url != 'https://api.{cluster}.openshift.com:443'.format(cluster=self.cluster):
+        cluster_api, err2 = self._cmd('oc whoami --show-server')
+        if err1 or err2 or cluster_api != self.cluster_api:
             return False
         else:
             self.set_namespace(os.environ.get('OCL_NAMESPACE', 'myproject'))
@@ -75,24 +77,23 @@ class OpenShiftClient:
 
     def cluster_exists(self):
         try:
-            conn = urllib.request.urlopen('https://api.{cluster}.openshift.com'.format(cluster=self.cluster), cafile=certifi.where())
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+            context.load_verify_locations(cafile=certifi.where())
+            conn = urllib.request.urlopen(self.cluster_api, context=context)
         except urllib.error.URLError as e:
             if e.reason.errno == 8:  # hostname doesn't exist
                 return False
             else:
                 raise e
         else:
-            if conn.code not in [200, 302]:
-                return False
-            else:
-                return True
+            return conn.code in [200, 302]
 
 
 class KubeContext:
-    def __init__(self, cluster, path='~/.kube/config', reset=False, password=None):
-        self.oc = OpenShiftClient(cluster, password)
+    def __init__(self, cluster_api, path='~/.kube/config', reset=False, password=None):
+        self.oc = OpenShiftClient(cluster_api, password)
         self.yaml = YAML()
-        self.cluster = cluster
+        self.cluster_api = cluster_api
         self.path = Path.home() / path[2:] if path.startswith('~/') else Path(path)
         if reset:
             self.context = self.yaml.load('''
@@ -117,10 +118,7 @@ class KubeContext:
         self.yaml.dump(self.context, self.path)
 
     def _find_resource(self, resource, username=None, get_index=False):
-        if username:
-            search_for = username
-        else:
-            search_for = self.cluster
+        search_for = username if username else self.cluster_api
         if get_index:
             return next((index for index, value in enumerate(self.context[resource]) if value['name'] == search_for), None)
         else:
@@ -131,36 +129,42 @@ class KubeContext:
         return user['user']['token'] if user else None
 
     def _create_user(self):
-        # if username/password auth will be used
-        if self.cluster in SHORTHANDS.values():
-            temp_path = '~/.kube/temp_config'
-            try:
-                self.oc.login(user=os.environ['OCL_USERNAME'], config_path=Path.home() / temp_path[2:])
-            except KeyError:
-                print('Be sure to set the `OCL_USERNAME` environment variable before continuing.')
-                exit(1)
-            # capture token from newly created .kube/temp_config
-            temp_context = KubeContext(self.cluster, temp_path)
-            try:
-                username = os.environ['OCL_USERNAME']
-            except KeyError:
-                print('Be sure to set the `OCL_USERNAME` environment variable before continuing.')
-                exit(1)
-            token = temp_context._get_token('{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster))
-            temp_context.path.unlink()
+        # Assume CLI username/password is no longer acceptable
+        # if self.cluster in SHORTHANDS.values():
+        #     temp_path = '~/.kube/temp_config'
+        #     try:
+        #         self.oc.login(user=os.environ['OCL_USERNAME'], config_path=Path.home() / temp_path[2:])
+        #     except KeyError:
+        #         print('Be sure to set the `OCL_USERNAME` environment variable before continuing.')
+        #         exit(1)
+        #     # capture token from newly created .kube/temp_config
+        #     temp_context = KubeContext(self.cluster, temp_path)
+        #     try:
+        #         username = os.environ['OCL_USERNAME']
+        #     except KeyError:
+        #         print('Be sure to set the `OCL_USERNAME` environment variable before continuing.')
+        #         exit(1)
+        #     token = temp_context._get_token('{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster))
+        #     temp_context.path.unlink()
+        # else:
+        # v4 cluster APIs are hosted at the 6443 port
+        if ':6443' in self.cluster_api:
+            token_request_url = self.cluster_api.replace('api', 'oauth-openshift.apps')
         else:
-            webbrowser.open('https://api.{cluster}.openshift.com/oauth/token/request'.format(cluster=self.cluster))
-            username = 'wgordon'
-            token = getpass('API token: ')
+            token_request_url = self.cluster_api
+        # Remove port number
+        token_request_url = token_request_url[:token_request_url.rindex(':')]
+        webbrowser.open(f'{token_request_url}/oauth/token/request')
+        token = getpass('API token: ')
         return {
-            'name': '{username}/api-{cluster}-openshift-com:443'.format(username=username, cluster=self.cluster),
+            'name': self.cluster_api,
             'user': {'token': token}
         }
 
     def _create_cluster(self):
         return {
-            'name': self.cluster,
-            'cluster': {'server': 'https://api.{cluster}.openshift.com:443'.format(cluster=self.cluster)}
+            'name': self.cluster_api,
+            'cluster': {'server': self.cluster_api}
         }
 
     def set_context(self):
@@ -171,7 +175,7 @@ class KubeContext:
 
         blocks = {'users': self._create_user(), 'clusters': self._create_cluster()}
         blocks['contexts'] = {
-            'name': self.cluster,
+            'name': self.cluster_api,
             'context': {'user': blocks['users']['name'], 'cluster': blocks['clusters']['name']}
         }
 
@@ -188,21 +192,18 @@ class KubeContext:
 
         self.dump()
         self.oc.set_context()
-        if self.oc.is_logged_in():
-            return True
-        else:
-            return False
+        return self.oc.is_logged_in()
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Handles automatically logging in to ANY OpenShift cluster',
                                      formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('cluster', type=str, help='''
+    cluster_shorthands = '\n\t\t     '.join([f'{shorthand}:\t{cluster_api}' for shorthand, cluster_api in SHORTHANDS.items()])
+    parser.add_argument('cluster_api', type=str, help=f'''
             The cluster-id of the specific cluster that is being logged into.
             The following shorthand options are available as well:
-              {cluster_shorthand}
-        '''.format(cluster_shorthand='\n\t\t    '.join(
-        ['{shorthand}:\t{cluster}'.format(shorthand=key, cluster=value) for key, value in SHORTHANDS.items()])))
+              {cluster_shorthands}
+        ''')
     parser.add_argument('--reset', action='store_true', help='Resets the .kube/config contexts')
     parser.add_argument('--password', type=str, help='Optionally provide password')
 
@@ -211,10 +212,10 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
-    cluster_id = SHORTHANDS.get(args.cluster, args.cluster)
+    cluster = SHORTHANDS.get(args.cluster_api, args.cluster_api)
 
-    kube_context = KubeContext(cluster_id, reset=args.reset, password=args.password)
+    kube_context = KubeContext(cluster, reset=args.reset, password=args.password)
     if kube_context.set_context():
-        print('Successfully logged into {}'.format(cluster_id))
+        print(f'Successfully logged into {cluster}')
     else:
-        print('Unable to login to {}'.format(cluster_id))
+        print(f'Unable to login to {cluster}')
