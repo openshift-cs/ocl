@@ -214,8 +214,23 @@ if __name__ == '__main__':
     args = parse_args()
     cluster = SHORTHANDS.get(args.cluster_api, args.cluster_api)
 
-    kube_context = KubeContext(cluster, reset=args.reset, password=args.password)
-    if kube_context.set_context():
-        print(f'Successfully logged into {cluster}')
+    # Allow for an easy way to calculate the console URL
+    if cluster == 'console':
+        cluster, err = OpenShiftClient._cmd('oc whoami --show-server')
+        if err:
+            print(err)
+            exit(-1)
+        # v4 cluster APIs are hosted at the 6443 port
+        if ':6443' in cluster:
+            console_url = cluster.replace('api', 'console-openshift-console.apps')
+        else:
+            console_url = cluster.replace('api', 'console')
+        # Remove port number
+        console_url = console_url[:console_url.rindex(':')]
+        webbrowser.open(console_url)
     else:
-        print(f'Unable to login to {cluster}')
+        kube_context = KubeContext(cluster, reset=args.reset, password=args.password)
+        if kube_context.set_context():
+            print(f'Successfully logged into {cluster}')
+        else:
+            print(f'Unable to login to {cluster}')
